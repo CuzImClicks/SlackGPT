@@ -1,8 +1,9 @@
 # pylint: disable=line-too-long
 # pylint: disable=dangerous-default-value
 from enum import Enum
-from typing import Callable
+from typing import Callable, List
 from datetime import datetime
+import os
 
 class Colors(Enum):
     """Colors for the terminal
@@ -74,20 +75,73 @@ class Colors(Enum):
         return f"\033[38;2;{red};{green};{blue}m"
 
 
-class Logger:
+class Level(Enum):
+    """The level of the log message
+    
+    Args:
+        Enum (int): The number of the level
+    """
+    DEBUG = 0
+    LOG = 1
+    INFO = 2
+    WARNING = 3
+    ERROR = 4
 
-    class Level(Enum):
-        """The level of the log message
+
+class Handler:
+
+    def __init__(self, formatter: Callable[[str, object, str, dict], str] = lambda text, level, name, colors: text) -> None:
+        """A handler that gets called by the Logger when it logs something regardless of the level
+        """
+        pass
+
+    def __call__(self, text: str, name: str, level: Level) -> None:
+        """This method gets called when the Logger logs something
 
         Args:
-            Enum (int): The number of the level
+            formatted_text (str): The text returned by the logger formatter
+            level (Level): The Level of the log message
         """
-        DEBUG = 0
-        LOG = 1
-        INFO = 2
-        WARNING = 3
-        ERROR = 4
+        pass
 
+
+class FileHandler(Handler):
+
+    @staticmethod
+    def filename_generator(directory: str, name: str, extension: str = "log") -> str:
+        return f"{directory + '/' if directory else ''}{name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{extension}"
+
+    @staticmethod
+    def __latest_generator(directory: str, _: str, extension: str = "txt") -> str:
+        return f"{directory + '/' if directory else ''}latest.{extension}"
+
+    @staticmethod
+    def __error_generator(directory: str, _: str, extension: str = "txt") -> str:
+        return f"{directory + '/' if directory else ''}error.{extension}"
+
+    @staticmethod
+    def nameless_generator(directory: str, _: str, extension: str = "txt") -> str:
+        return f"{directory + '/' if directory else ''}{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.{extension}"
+
+    latest_file_handler = lambda formatter, directory = "./logs": FileHandler(Level.DEBUG, formatter, directory, FileHandler.__latest_generator)
+    error_file_handler = lambda formatter, directory = "./logs": FileHandler(Level.ERROR, formatter, directory, FileHandler.__error_generator)
+
+    def __init__(self, level, formatter: Callable[[str, object, str, dict], str], directory: str = "./logs",  generator: Callable[[str, str], str] = filename_generator) -> None:
+        self.generator = generator
+        self.level = level
+        self.formatter = formatter
+        self.directory = directory
+
+    def __call__(self, text: str, name: str, level: Level) -> None:
+        if level.value >= self.level.value:
+            file = self.generator(self.directory, name)
+            if not os.path.exists(self.directory):
+                os.mkdir(self.directory)
+            with open(file, "a" if os.path.exists(file) else "w+") as f:
+                f.write(self.formatter(str(text) + "\n", level, name, {}))
+
+
+class Logger:
 
     # Default colors for the different levels
     default_colors = {
@@ -101,12 +155,10 @@ class Logger:
     @staticmethod
     def default_formatter(text, level: Level = Level.INFO, name: str = __name__, colors: dict = default_colors) -> str:
         """The default log formatter
-
         Args:
             text (any): The text to log
             level (Level, optional): The Level to use for logging. Defaults to Level.INFO.
             name (str, optional): The name for the current logger. Defaults to __name__.
-
         Returns:
             str: The formatted string for printing to the console
         """
@@ -115,12 +167,10 @@ class Logger:
     @staticmethod
     def minecraft_formatter(text, level: Level = Level.INFO, name: str = __name__, colors: dict = default_colors) -> str:
         """The default log formatter for Minecraft
-
         Args:
             text (any): The text to log
             level (Level, optional): The Level to use for logging. Defaults to Level.INFO.
             name (str, optional): The name for the current logger. Defaults to __name__.
-
         Returns:
             str: The formatted string for printing to the console
         """
@@ -128,7 +178,7 @@ class Logger:
 
     def __init__(self, name: str = __name__, level: Level = Level.INFO,
                  formatter: Callable[[str, Level, str, dict], str] = default_formatter,
-                 level_colors: dict = default_colors):
+                 level_colors: dict = default_colors, handlers: List[Handler] = []):
         """A simple logger with color support and logging levels
 
         Args:
@@ -141,6 +191,13 @@ class Logger:
         self.formatter = formatter
         self.level = level
         self.colors = level_colors
+        self.handlers = handlers
+
+    def print(self, text: str, level: Level):
+        for handler in self.handlers:
+            handler(text, self.name, level)
+        if self.level.value <= level.value:
+            print(f"{self.formatter(str(text), level, self.name, self.colors)}{Colors.RESET.value}")
 
     def log(self, text="", level: Level = Level.LOG):
         """Logs the given text to the console
@@ -149,8 +206,8 @@ class Logger:
             text (any): The text to log
             level (Level, optional): The level to use for logging. Defaults to Level.LOG.
         """
-        if self.level.value <= level.value:
-            print(f"{self.formatter(str(text), level, self.name, self.colors)}{Colors.RESET.value}")
+        self.print(text, level)
+
 
     def debug(self, text=""):
         """Logs a message at the Level.DEBUG level
@@ -158,7 +215,7 @@ class Logger:
         Args:
             text (any): The text to log
         """
-        self.log(text, Logger.Level.DEBUG)
+        self.print(text, Level.DEBUG)
 
     def info(self, text=""):
         """Logs a message at the Level.INFO level
@@ -166,7 +223,7 @@ class Logger:
         Args:
             text (any): The text to log
         """
-        self.log(text, Logger.Level.INFO)
+        self.print(text, Level.INFO)
 
     def warning(self, text=""):
         """Logs a message at the Level.WARNING level
@@ -174,7 +231,7 @@ class Logger:
         Args:
             text (any): The text to log
         """
-        self.log(text, Logger.Level.WARNING)
+        self.print(text, Level.WARNING)
 
     def error(self, text=""):
         """Logs a message at the Level.ERROR level
@@ -182,13 +239,15 @@ class Logger:
         Args:
             text (any): The text to log
         """
-        self.log(text, Logger.Level.ERROR)
+        self.print(text, Level.ERROR)
 
+
+main_file_handler = FileHandler(Level.LOG, Logger.minecraft_formatter, "./logs", FileHandler.nameless_generator)
 
 # Testing
 if __name__ == "__main__":
 
-    lg = Logger("Logger Test", level=Logger.Level.LOG, formatter=Logger.minecraft_formatter)
+    lg = Logger("Logger Test", level=Level.LOG, formatter=Logger.minecraft_formatter)
 
     for color in Colors:
         lg.log(f"{color.value}{color.name}")
