@@ -10,13 +10,13 @@ from Logger import *
 import threading
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--auth_path", required=False)
-parser.add_argument("--token", "-t", required=False)
-parser.add_argument("--secret", "-s", required=False)
-parser.add_argument("--debug", "-d", action="store_true", required=False)
-parser.add_argument("--headless", action="store_false", required=False)
-parser.add_argument("--browser", choices=["firefox", "chromium"], default="firefox", required=False)
-parser.add_argument("--prefix", default="!", required=False)
+parser.add_argument("--auth_path", help="Specifies the path to a file containing first the Slack Bot token, then the Slack signing secret", required=False)
+parser.add_argument("--token", "-t", help="Manually specify the Slack token", required=False)
+parser.add_argument("--secret", "-s", help="Manually specify the Slack signing secret", required=False)
+parser.add_argument("--debug", "-d", action="store_true", help="Enable debug logging", required=False)
+parser.add_argument("--headless", action="store_true", help="Run chatgpt wrapper in headless mode", required=False)
+parser.add_argument("--browser", choices=["firefox", "chromium"], default="firefox", help="Specify the browser used by chatgpt wrapper (playwright install <browser>)", required=False)
+parser.add_argument("--prefix", default="!", help="Specify the prefix to trigger the bot", required=False)
 
 args = parser.parse_args()
 
@@ -52,27 +52,7 @@ def message(payload: dict):
     message = event["text"]
 
     if message.lower().startswith(args.prefix.lower()):
-        user = handler.get_user(username)
-        if user.in_pending(message) or user.in_answered(message):
-            client.chat_postMessage(channel=event["channel"], text="You already asked that question. Please wait for an answer." if user.in_pending(message) else [question.answer for question in user.answered if question.text == message][0])
-            return Response("OK", status=200)
-        try:
-            start = time.time()#
-            question = Question(event["channel"], username, message)
-            handler.queue.push(question)
-            lg.info(f"Added {username} to queue")            
-            while not question.is_answered:
-                time.sleep(1)
-                lg.warning(f"Waiting for {username} to be answered")
-            lg.info(f"Done! Took {time.time() - start} seconds")
-            lg.info(f"Response: {question.answer}")
-            
-            client.chat_postMessage(channel=event["channel"], text=question.answer)
-            return Response("OK", status=200)
-        except Exception as e:
-            lg.error(e)
-            client.chat_postMessage(channel=event["channel"], text=f"An error occurred. Please try again later. \n{e}")
-            return Response("An error occurred. Please try again later.", status=500)
+        return handler.process_message(event, username)
 
     return Response("OK", status=200)
 
@@ -208,6 +188,29 @@ class Handler:
             User: The user object
         """
         return [user for user in self.users if user.username == username][0] if username in [user.username for user in self.users] else User(username)
+
+    def process_message(self, event: dict, username) -> Response:
+        user = self.get_user(username)
+        if user.in_pending(message) or user.in_answered(message):
+            client.chat_postMessage(channel=event["channel"], text="You already asked that question. Please wait for an answer." if user.in_pending(message) else [question.answer for question in user.answered if question.text == message][0])
+            return Response("OK", status=200)
+        try:
+            start = time.time()#
+            question = Question(event["channel"], username, message)
+            self.queue.push(question)
+            lg.info(f"Added {username} to queue")            
+            while not question.is_answered:
+                time.sleep(1)
+                lg.warning(f"Waiting for {username} to be answered")
+            lg.info(f"Done! Took {time.time() - start} seconds")
+            lg.info(f"Response: {question.answer}")
+        
+            client.chat_postMessage(channel=event["channel"], text=question.answer)
+            return Response("OK", status=200)
+        except Exception as e:
+            lg.error(e)
+            client.chat_postMessage(channel=event["channel"], text=f"An error occurred. Please try again later. \n{e}")
+            return Response("An error occurred. Please try again later.", status=500)
 
 
 class GPTThread(threading.Thread):
