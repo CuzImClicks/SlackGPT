@@ -190,6 +190,15 @@ class Handler:
         return [user for user in self.users if user.username == username][0] if username in [user.username for user in self.users] else User(username)
 
     def process_message(self, event: dict, username) -> Response:
+        """Handles the question from the user and replies to it
+
+        Args:
+            event (dict): The event extracted from the payload
+            username (str): The username of the user
+
+        Returns:
+            Response: The response for the Slack API
+        """	
         user = self.get_user(username)
         if user.in_pending(message) or user.in_answered(message):
             client.chat_postMessage(channel=event["channel"], text="You already asked that question. Please wait for an answer." if user.in_pending(message) else [question.answer for question in user.answered if question.text == message][0])
